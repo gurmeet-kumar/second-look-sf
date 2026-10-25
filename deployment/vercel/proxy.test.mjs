@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const require=createRequire(import.meta.url);
 const {build}=require('esbuild');
@@ -23,6 +23,24 @@ let checks=0;
 async function test(name,fn){await fn();checks++;console.log(`PASS ${name}`);}
 
 try {
+  await test('the deployed ESM entry loads with explicit module extensions',async()=>{
+    const esm=path.join(folder,'esm');mkdirSync(esm);writeFileSync(path.join(esm,'package.json'),'{}');
+    await build({entryPoints:[fileURLToPath(new URL('../../api/proxy.ts',import.meta.url)),fileURLToPath(new URL('./proxy.ts',import.meta.url))],outbase:fileURLToPath(new URL('../../',import.meta.url)),outdir:esm,bundle:false,platform:'node',format:'esm',logLevel:'silent'});
+    writeFileSync(path.join(esm,'package.json'),JSON.stringify({type:'module'}));
+    const entry=await import(pathToFileURL(path.join(esm,'api/proxy.js')).href);
+    assert.equal(entry.requestUrl({url:'/api/proxy',query:{__second_look_path:'scouts/scout-1/scan'}}),'/api/scouts/scout-1/scan');
+    assert.equal(entry.requestUrl({url:'/api/proxy?__second_look_path=locations&q=Chicago&bad=drop'}),'/api/locations?q=Chicago');
+    assert.equal(entry.requestUrl({url:'/api/proxy'}),null);
+    assert.equal(entry.requestUrl({url:'/api/proxy',query:{__second_look_path:['state','session']}}),null);
+    assert.equal(entry.requestUrl({url:'/api/proxy',query:{__second_look_path:'../worker/tick'}}),null);
+    const response={statusCode:0,headers:{},setHeader(k,v){this.headers[k]=v;},end(value){this.value=JSON.parse(value);}};
+    await entry.default({method:'GET',url:'/api/proxy',query:{__second_look_path:'session'},headers:{}},response);
+    assert.equal(response.statusCode,200);assert.equal(response.value.canManage,false);
+    await entry.default({method:'POST',url:'/api/proxy',query:{__second_look_path:'scouts/scout-1/scan'},headers:{host:'second-look.vercel.app',origin:'https://second-look.vercel.app'},body:{}},response);
+    assert.equal(response.statusCode,401);
+    await entry.default({method:'POST',url:'/api/proxy',query:{__second_look_path:'worker/tick'},headers:{},body:{}},response);
+    assert.equal(response.statusCode,404);
+  });
   await test('anonymous reads are sanitized and do not forward client credentials',async()=>{
     calls.length=0;
     const result=await run(request('GET','/api/state','','clientCookie=private'));

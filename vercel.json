@@ -5,8 +5,14 @@
   "buildCommand": "npm run build:vercel",
   "outputDirectory": "dist-vercel",
   "functions": {
-    "api/[...path].ts": {
+    "api/proxy.ts": {
       "maxDuration": 60
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/proxy?__second_look_path=:path*"
+    }
+  ]
 }
