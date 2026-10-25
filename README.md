@@ -34,9 +34,9 @@ Fill the ignored `.dev.vars` file with your own service keys. Required names are
 
 ## Deployment
 
-The current deployment runs on Sites with Cloudflare Workers and D1. Its `chatgpt.site` address needs no domain purchase. An independent Cloudflare deployment needs your own D1 binding, runtime secrets, app authentication and a protected scheduler endpoint. GitHub Pages cannot run the backend.
+For **Vercel**, this repository includes a Vite frontend and server-only API proxy. Import the repository with the settings in `vercel.json`; the build command is `npm run build:vercel` and the output is `dist-vercel`. Configure the four server-only values listed in [Vercel setup](deployment/vercel/README.md). Vercel hosts the public interface and proxy; the existing private Cloudflare backend retains D1, API integrations and background monitoring. The public demo supports browsing. Its owner can sign in with a separate management password to create or change scouts. This does not create independent user accounts.
 
-See [product details](README.product.md), [background operation](AUTOMATION.md), and [framework setup](docs/starter.md).
+The original Sites/Cloudflare build remains available with `npm run build`. Its `chatgpt.site` address needs no domain purchase. An independent backend migration needs your own database, runtime secrets, app authentication and a protected scheduler endpoint. GitHub Pages cannot run the backend. See [product details](README.product.md), [background operation](AUTOMATION.md), and [framework setup](docs/starter.md).
 
 ## Development checks
 

@@ -1,0 +1,12 @@
+node_modules
+.dev.vars*
+.env*
+!.env.example
+.wrangler
+.sites-runtime
+dist
+dist-vercel
+.outputs
+outputs
+work
+.git
