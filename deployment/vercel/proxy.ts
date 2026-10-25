@@ -5,7 +5,7 @@ const SESSION_SECONDS = 12 * 60 * 60;
 const BODY_LIMIT = 8_192;
 const BACKEND_ORIGIN = 'https://second-look-sf-finds.cocoa-trout-0039.chatgpt.site';
 const cityCache=new Map<string,{expires:number;data:unknown}>();
-type Settings = { backendUrl: string; backendToken: string; adminPassword: string; sessionSecret: string };
+type Settings = { backendUrl: string; backendToken: string; adminPassword: string; sessionSecret: string; publicDemo: boolean };
 type ProxyRequest = { method: string; url: string; headers: Headers; body: string };
 type Result = { status: number; body: unknown; headers?: Record<string,string> };
 export type ProxyOptions = { env?: Record<string,string | undefined>; fetcher?: typeof fetch; now?: number };
@@ -18,7 +18,7 @@ function settings(env: Record<string,string | undefined>): Settings {
   // A service credential is only valid for this exact private Site. Never send
   // it to a configurable arbitrary host, a redirect, or a URL with credentials.
   if (parsed.origin !== BACKEND_ORIGIN || parsed.pathname !== '/' || parsed.search || parsed.hash || parsed.username || parsed.password) throw new Error('Invalid backend configuration');
-  return { backendUrl: parsed.origin, backendToken: env.SECOND_LOOK_BACKEND_TOKEN || '', adminPassword: env.SECOND_LOOK_ADMIN_PASSWORD || '', sessionSecret: env.SECOND_LOOK_SESSION_SECRET || '' };
+  return { backendUrl: parsed.origin, backendToken: env.SECOND_LOOK_BACKEND_TOKEN || '', adminPassword: env.SECOND_LOOK_ADMIN_PASSWORD || '', sessionSecret: env.SECOND_LOOK_SESSION_SECRET || '', publicDemo:env.SECOND_LOOK_DEMO_ACCESS==='open' };
 }
 
 function loginAvailable(config: Settings): boolean { return config.adminPassword.length >= 12 && config.sessionSecret.length >= 32; }
@@ -56,6 +56,12 @@ export function sanitizeState(state: any): Record<string,unknown> {
   return {scouts,deletedScouts:[],listings,activity:[],workByScout,system:{demoEmail:'',schedulerStatus:state?.system?.schedulerStatus==='Connected'?'Connected':'Not connected',lastWorkerAt:state?.system?.lastWorkerAt||null,creditsRemaining:null,requestsUsed:0,requestBudget:0,modelAvailable:Boolean(state?.system?.modelAvailable)}};
 }
 
+function redactDemoResponse(value: unknown): unknown {
+  if(Array.isArray(value)) return value.map(redactDemoResponse);
+  if(!value || typeof value!=='object') return value;
+  return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,key==='email'||key==='demoEmail'?'':key==='lastError'?null:redactDemoResponse(item)]));
+}
+
 function allowedMethods(path: string): string[] | null {
   if(path==='/api/state' || path==='/api/locations') return ['GET'];
   if(path==='/api/scouts') return ['POST'];
@@ -70,17 +76,20 @@ export async function handleProxy(request: ProxyRequest, options: ProxyOptions =
   let config:Settings;
   try { config=settings(options.env || process.env); } catch { return reply(503,{error:'The demo connection is not configured.'}); }
   const now=options.now ?? Date.now();
-  const canManage=loginAvailable(config) && verifySession(request.headers.get('cookie'),config.sessionSecret,now);
+  const isOwner=loginAvailable(config) && verifySession(request.headers.get('cookie'),config.sessionSecret,now);
+  const publicDemo=config.publicDemo;
+  const canManage=publicDemo || isOwner;
   const method=request.method.toUpperCase();
   let url:URL;
   try { url=new URL(request.url,'https://vercel.invalid'); } catch { return reply(400,{error:'Invalid request.'}); }
   const path=url.pathname;
   if (Buffer.byteLength(request.body,'utf8')>BODY_LIMIT) return reply(413,{error:'The request is too large.'});
   if(path==='/api/session') {
-    if(method==='GET') return reply(200,{canManage,loginAvailable:loginAvailable(config)});
+    if(method==='GET') return reply(200,{canManage,loginAvailable:!publicDemo && loginAvailable(config),publicDemo});
     if(!['POST','DELETE'].includes(method)) return reply(405,{error:'This action is unavailable.'},{Allow:'GET, POST, DELETE'});
     if(!sameOrigin(request)) return reply(403,{error:'This action must come from the app.'});
-    if(method==='DELETE') return reply(200,{canManage:false},{'Set-Cookie':cookie('',0)});
+    if(method==='DELETE') return reply(200,{canManage:publicDemo,publicDemo},{'Set-Cookie':cookie('',0)});
+    if(publicDemo) return reply(200,{canManage:true,publicDemo:true});
     let input:any;
     try { input=JSON.parse(request.body); } catch { return reply(401,{error:'Unable to sign in.'}); }
     if(!loginAvailable(config) || typeof input?.password!=='string' || input.password.length>1024 || !same(input.password,config.adminPassword)) return reply(401,{error:'Unable to sign in.'});
@@ -118,6 +127,7 @@ export async function handleProxy(request: ProxyRequest, options: ProxyOptions =
       if(cityCache.size>=100) cityCache.delete(cityCache.keys().next().value!);
       cityCache.set(cityCacheKey,{expires:now+60_000,data});
     }
-    return reply(response.status,path==='/api/state' && !canManage?sanitizeState(data):data);
+    const output=path==='/api/state' && (publicDemo || !isOwner)?sanitizeState(data):publicDemo?redactDemoResponse(data):data;
+    return reply(response.status,output);
   } catch { return reply(502,{error:'The demo connection took too long. Please try again.'}); }
 }

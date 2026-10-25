@@ -67,7 +67,7 @@ try {
     assert.equal(verifySession(authCookie,'another-secret-with-at-least-32-chars',now),false);
   });
   await test('login and logout require origin and set protected cookie flags',async()=>{
-    assert.deepEqual((await run(request('GET','/api/session'))).body,{canManage:false,loginAvailable:true});
+    assert.deepEqual((await run(request('GET','/api/session'))).body,{canManage:false,loginAvailable:true,publicDemo:false});
     assert.equal((await run(request('POST','/api/session',JSON.stringify({password:'wrong'})))).status,401);
     const result=await run(request('POST','/api/session',JSON.stringify({password:env.SECOND_LOOK_ADMIN_PASSWORD})));
     assert.equal(result.status,200);assert.equal(result.body.canManage,true);
@@ -100,6 +100,38 @@ try {
     calls.length=0;assert.equal((await run(request('GET','/api/locations?q=Chicago%2C%20IL&url=https://evil.example'))).status,200);
     assert.equal(calls[0].url,`${env.SECOND_LOOK_BACKEND_URL}/api/locations?q=Chicago%2C+IL`);
     assert.equal((await run(request('GET',`/api/locations?q=${'a'.repeat(121)}`))).status,400);
+  });
+  await test('open shared demo permits anonymous management while preserving origin checks and worker isolation',async()=>{
+    const openEnv={...env,SECOND_LOOK_DEMO_ACCESS:'open',SECOND_LOOK_ADMIN_PASSWORD:'',SECOND_LOOK_SESSION_SECRET:''};
+    assert.deepEqual((await run(request('GET','/api/session'),{env:openEnv})).body,{canManage:true,loginAvailable:false,publicDemo:true});
+    const reached=[];
+    const openFetcher=async(url,init)=>{reached.push({url:String(url),init});return Response.json({scout:{id:'scout-1',email:'private@example.invalid',lastError:'private provider error'},nested:{demoEmail:'private@example.invalid'}});};
+    const routes=[['POST','/api/scouts'],['PATCH','/api/scouts/scout-1'],['DELETE','/api/scouts/scout-1'],['POST','/api/scouts/scout-1/scan'],['POST','/api/scouts/scout-1/restore'],['PATCH','/api/listings/item-1'],['POST','/api/listings/item-1/resale']];
+    for(const [method,url] of routes) {
+      const result=await run(request(method,url,'{}'),{env:openEnv,fetcher:openFetcher});
+      assert.equal(result.status,200);assert.equal(result.body.scout.email,'');assert.equal(result.body.scout.lastError,null);assert.equal(result.body.nested.demoEmail,'');
+      assert.equal(JSON.stringify(result).includes('private@example.invalid'),false);
+      const evil=request(method,url,'{}');evil.headers.set('origin','https://evil.example');
+      assert.equal((await run(evil,{env:openEnv,fetcher:openFetcher})).status,403);
+      const missing=request(method,url,'{}');missing.headers.delete('origin');
+      assert.equal((await run(missing,{env:openEnv,fetcher:openFetcher})).status,403);
+    }
+    assert.equal(reached.length,routes.length);
+    assert.equal((await run(request('POST','/api/worker/tick','{}'),{env:openEnv,fetcher:openFetcher})).status,404);
+    assert.equal(reached.length,routes.length);
+    assert.equal((await run(request('POST','/api/scouts','x'.repeat(8_193)),{env:openEnv,fetcher:openFetcher})).status,413);
+    assert.equal((await run(request('DELETE','/api/session'),{env:openEnv})).body.canManage,true);
+  });
+  await test('open demo state stays sanitized even with a valid owner cookie and opening is explicit',async()=>{
+    for(const cookie of ['',authCookie]) {
+      const result=await run(request('GET','/api/state','',cookie),{env:{...env,SECOND_LOOK_DEMO_ACCESS:'open'}});
+      assert.equal(result.body.scouts[0].email,'');assert.equal(result.body.scouts[0].lastError,null);
+      assert.deepEqual(result.body.deletedScouts,[]);assert.deepEqual(result.body.activity,[]);assert.equal(result.body.system.demoEmail,'');assert.equal(result.body.system.creditsRemaining,null);
+      assert.equal(JSON.stringify(result.body).includes('private@example.invalid'),false);
+    }
+    for(const setting of [undefined,'','closed','true','OPEN']) assert.equal((await run(request('POST','/api/scouts','{}'),{env:{...env,SECOND_LOOK_DEMO_ACCESS:setting}})).status,401);
+    const insecure=request('POST','/api/scouts','{}');insecure.headers.set('origin','http://second-look.vercel.app');
+    assert.equal((await run(insecure,{env:{...env,SECOND_LOOK_DEMO_ACCESS:'open'}})).status,403);
   });
   console.log(`All ${checks} Vercel proxy test groups passed.`);
 } finally {rmSync(folder,{recursive:true,force:true});}

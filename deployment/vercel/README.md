@@ -10,6 +10,9 @@ Configure these **server-only** Vercel environment variables:
 - `SECOND_LOOK_BACKEND_TOKEN`: the supported service access credential for that Site.
 - `SECOND_LOOK_ADMIN_PASSWORD`: at least 12 characters; use a random password.
 - `SECOND_LOOK_SESSION_SECRET`: at least 32 characters; use a separate random secret.
+- `SECOND_LOOK_DEMO_ACCESS`: set `open` for password-free shared demo controls. Omit or use `closed` for the owner-password flow.
+
+The live demo uses open access. Visitors can create, edit, run, pause and delete the same shared scouts. Existing provider budgets, request limits and private backend service access still apply. Team emails, deleted scout history and internal configuration stay hidden from public responses.
 
 Never prefix these names with `VITE_` or `NEXT_PUBLIC_`. Never commit their values.
 The proxy pins the backend origin, rejects redirects, excludes cookies from
@@ -25,13 +28,13 @@ Session protocol:
 
 The cookie is HttpOnly, Secure, SameSite=Strict, and restricted to `/` on the
 current host. Every write requires an HTTPS same-origin request. Every proxied
-write also requires the signed owner session. Local HTTP does not set an owner
+write requires the signed owner session unless open demo access is explicitly enabled. Local HTTP does not set an owner
 session; use a Vercel HTTPS preview to check login.
 
 Anonymous visitors can read sanitized state and city searches. Public state
 excludes emails, deleted scouts, internal budget details, errors and activity.
-City query results have a bounded 60-second per-instance cache. Public visitors
-cannot modify shared scouts, mark listings, trigger scans or refresh resale.
+City query results have a bounded 60-second per-instance cache. With open access enabled, public visitors can modify shared scouts, mark listings,
+trigger scans and refresh resale. With open access closed, these actions require the owner session.
 The worker endpoint is never proxied; keep the existing private scheduler.
 
 This is a single owner demo, not independent accounts or per-user data storage.
